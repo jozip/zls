@@ -21,7 +21,7 @@ pub const Manager = struct {
     zig_lib_dir: ?std.Build.Cache.Directory,
     global_cache_dir: ?std.Build.Cache.Directory,
     wasi_preopens: switch (builtin.os.tag) {
-        .wasi => std.fs.wasi.Preopens,
+        .wasi => std.process.Preopens,
         else => void,
     },
     build_runner_supported: union(enum) {
@@ -42,7 +42,7 @@ pub const Manager = struct {
         arena: std.heap.ArenaAllocator.State,
     },
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) error{OutOfMemory}!Manager {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map) std.process.Preopens.InitError!Manager {
         return .{
             .io = io,
             .allocator = allocator,
@@ -52,7 +52,7 @@ pub const Manager = struct {
             .global_cache_dir = null,
             .build_runner_supported = .no_dont_error,
             .wasi_preopens = switch (builtin.os.tag) {
-                .wasi => try std.fs.wasi.preopensAlloc(allocator),
+                .wasi => try std.process.Preopens.init(allocator),
                 else => {},
             },
             .config = .{},
@@ -69,8 +69,8 @@ pub const Manager = struct {
         const allocator = manager.allocator;
         switch (builtin.os.tag) {
             .wasi => {
-                for (manager.wasi_preopens.names[3..]) |name| allocator.free(name);
-                allocator.free(manager.wasi_preopens.names);
+                for (manager.wasi_preopens.map.keys()[3..]) |name| allocator.free(name);
+                manager.wasi_preopens.map.deinit(allocator);
             },
             else => {
                 if (manager.zig_lib_dir) |*zig_lib_dir| zig_lib_dir.handle.close(io);
@@ -216,11 +216,18 @@ pub const Manager = struct {
         if (config.zig_lib_path) |zig_lib_path| blk: {
             const zig_lib_dir: std.Io.Dir = switch (builtin.target.os.tag) {
                 // TODO The `zig_lib_path` could be a subdirectory of a preopen directory
-                .wasi => .{ .handle = manager.wasi_preopens.find(zig_lib_path) orelse {
+                .wasi => switch (manager.wasi_preopens.get(zig_lib_path) orelse {
                     log.warn("failed to resolve '{s}' WASI preopen", .{zig_lib_path});
                     config.zig_lib_path = null;
                     break :blk;
-                } },
+                }) {
+                    .file => {
+                        log.warn("'{s}' WASI preopen NOT a directory", .{zig_lib_path});
+                        config.zig_lib_path = null;
+                        break :blk;
+                    },
+                    .dir => |d| d,
+                },
                 else => std.Io.Dir.openDirAbsolute(io, zig_lib_path, .{}) catch |err| {
                     log.err("failed to open zig library directory '{s}': {}", .{ zig_lib_path, err });
                     config.zig_lib_path = null;
@@ -238,11 +245,18 @@ pub const Manager = struct {
         if (config.global_cache_path) |global_cache_path| blk: {
             const global_cache_dir: std.Io.Dir = switch (builtin.target.os.tag) {
                 // TODO The `global_cache_path` could be a subdirectory of a preopen directory
-                .wasi => .{ .handle = manager.wasi_preopens.find(global_cache_path) orelse {
+                .wasi => switch (manager.wasi_preopens.get(global_cache_path) orelse {
                     log.warn("failed to resolve '{s}' WASI preopen", .{global_cache_path});
                     config.global_cache_path = null;
                     break :blk;
-                } },
+                }) {
+                    .file => {
+                        log.warn("'{s}' WASI preopen NOT a directory", .{global_cache_path});
+                        config.zig_lib_path = null;
+                        break :blk;
+                    },
+                    .dir => |d| d,
+                },
                 else => std.Io.Dir.cwd().createDirPathOpen(io, global_cache_path, .{}) catch |err| {
                     log.err("failed to open global cache directory '{s}': {}", .{ global_cache_path, err });
                     config.global_cache_path = null;
