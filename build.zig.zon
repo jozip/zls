@@ -14,7 +14,7 @@
     // If you do not use Nix, a ZLS maintainer can take care of this.
     // Whenever the dependencies are updated, run the following command:
     // ```bash
-    // nix run github:nix-community/zon2nix#default_0_14 > deps.nix
+    // nix run github:nix-community/zon2nix#overlay_0_16 > deps.nix
     // ```
     // The `deps.nix` should also be updated to not fetch `tracy`.
     .dependencies = .{
